@@ -1,0 +1,9 @@
+*.out
+*.inp
+*.gbw
+*.densities
+*.tmp
+*.xyz
+__pycache__/
+.ipynb_checkpoints/
+*.pyc
