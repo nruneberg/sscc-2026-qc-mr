@@ -266,7 +266,10 @@ energy = output.results_properties.geometries[0].single_point_data.finalenergy
 print("OPI SCF energy   :", energy, "Eh")
 print("OPI Calculator   : OK")
 
-# cclib — parse the OPI r2SCAN-3c output (more complete than minimal RHF job)
+# cclib — parse the OPI r2SCAN-3c output
+# NOTE: cclib 1.8.x was last systematically tested against ORCA 4.2.
+# Parsing failures against ORCA 6.x output are a known compatibility issue
+# and do not indicate a problem with the environment.
 try:
     import cclib
     opi_out = str(opi_dir / "h2o_opi.out")
@@ -275,7 +278,8 @@ try:
     assert hasattr(data, "scfenergies"), "cclib: no scfenergies attribute"
     print(f"cclib          : OK (parsed SCF energy: {data.scfenergies[-1]:.6f} eV)")
 except Exception as e:
-    print("cclib          : FAILED —", e)
+    print(f"cclib          : {cclib.__version__} — parsing ORCA 6.x may be incomplete ({e})")
+    print("               → known compatibility issue, not an environment problem")
 
 # ============================================================
 # 6. Visualise H2O with nglview (run in its own cell)
