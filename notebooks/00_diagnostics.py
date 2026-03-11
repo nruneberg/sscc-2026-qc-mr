@@ -66,16 +66,51 @@ assert resolved, "orca not found on PATH — was orca-env/1.0 module loaded?"
 # 3. Supporting package imports
 # ============================================================
 print("\n=== 3. Supporting packages ===")
-import numpy;     print("numpy          :", numpy.__version__)
-import ase;       print("ASE            :", ase.__version__)
-import nglview;   print("nglview        :", nglview.__version__)
+import numpy;      print("numpy          :", numpy.__version__)
+import scipy;      print("scipy          :", scipy.__version__)
+import pandas;     print("pandas         :", pandas.__version__)
+import matplotlib; print("matplotlib     :", matplotlib.__version__)
+import ase;        print("ASE            :", ase.__version__)
+import cclib;      print("cclib          :", cclib.__version__)
+import nglview;    print("nglview        :", nglview.__version__)
 import ipywidgets; print("ipywidgets     :", ipywidgets.__version__)
-import cclib;     print("cclib          :", cclib.__version__)
+try:
+    import py3Dmol
+    print("py3Dmol        : OK (import as py3Dmol)")
+except ImportError as e:
+    print("py3Dmol        : MISSING —", e)
+try:
+    import pubchempy
+    print("pubchempy      : OK")
+except ImportError as e:
+    print("pubchempy      : MISSING —", e)
 try:
     import openbabel
     print("openbabel      : OK")
 except ImportError as e:
     print("openbabel      : MISSING —", e)
+
+try:
+    from rdkit import Chem
+    from rdkit.Chem import Draw, AllChem
+    mol = Chem.MolFromSmiles("O")
+    assert mol is not None, "RDKit failed to parse water SMILES"
+    print("rdkit          : OK (parsed water SMILES)")
+except ImportError as e:
+    print("rdkit          : MISSING —", e)
+
+try:
+    from openbabel import openbabel as ob
+    conv = ob.OBConversion()
+    conv.SetInAndOutFormats("smi", "xyz")
+    mol = ob.OBMol()
+    conv.ReadString(mol, "O")
+    xyz = conv.WriteString(mol)
+    assert "O" in xyz, "OpenBabel failed to convert water SMILES to xyz"
+    print("openbabel API  : OK (SMILES → xyz conversion)")
+except Exception as e:
+    print("openbabel API  : FAILED —", e)
+    print("               → fallback: use obabel CLI via subprocess")
 
 # ============================================================
 # 4. Run a minimal ORCA job (raw input file)
