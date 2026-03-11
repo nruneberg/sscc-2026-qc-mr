@@ -56,11 +56,11 @@ print("\n=== 2. OPI ===")
 import opi
 print("opi version    :", opi.__version__)
 
-# Verify OPI can resolve the ORCA binary via PATH
-from opi.lib.orca_binary import get_orca_binary
-resolved = get_orca_binary()
-print("OPI resolved ORCA binary:", resolved)
-assert Path(resolved).exists(), f"OPI resolved a non-existent binary: {resolved}"
+# Verify ORCA is on PATH
+import shutil
+resolved = shutil.which("orca")
+print("ORCA on PATH   :", resolved)
+assert resolved, "orca not found on PATH — was orca-env/1.0 module loaded?"
 
 # ============================================================
 # 3. Supporting package imports
