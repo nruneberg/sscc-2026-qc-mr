@@ -32,9 +32,20 @@ else:
     print("WARNING: mpirun is NOT from ORCA_WRAPPERS — parallel ORCA may fail.")
     print("         Expected prefix:", orca_wrappers)
 
-# OOD_PORTAL tells us we are inside an Open OnDemand session
-print("OOD_PORTAL     :", os.environ.get("OOD_PORTAL", "(not set — not an OOD session)"))
+# SLURM_OOD_ENV tells us we are inside an Open OnDemand session
+ood_env = os.environ.get("SLURM_OOD_ENV", "")
+partition = os.environ.get("SLURM_JOB_PARTITION", "")
+print("SLURM_OOD_ENV  :", ood_env if ood_env else "(not set — not an OOD session)")
 print("SLURM_JOB_ID   :", os.environ.get("SLURM_JOB_ID", "(not set)"))
+print("SLURM_JOB_PARTITION:", partition)
+
+# Report expected mpirun routing
+if partition == "interactive":
+    print("mpirun routing : orterun --oversubscribe (interactive partition)")
+elif os.environ.get("SLURM_JOB_ID"):
+    print("mpirun routing : srun (batch job)")
+else:
+    print("mpirun routing : orterun (outside Slurm)")
 
 # Determine the correct CPU count.
 # OOD Jupyter for Courses allocates cores as Slurm *tasks* (--ntasks=N),
@@ -84,6 +95,40 @@ try:
     print("pubchempy      : OK")
 except ImportError as e:
     print("pubchempy      : MISSING —", e)
+
+# scipy — basic numerical test
+try:
+    from scipy import linalg
+    import numpy as np
+    A = np.array([[1, 2], [3, 4]])
+    eigvals = linalg.eigvals(A)
+    assert len(eigvals) == 2
+    print("scipy          : OK (linalg.eigvals)")
+except Exception as e:
+    print("scipy          : FAILED —", e)
+
+# pandas — create and query a DataFrame
+try:
+    import pandas as pd
+    df = pd.DataFrame({"energy": [-74.9, -75.1], "method": ["RHF", "DFT"]})
+    assert df.shape == (2, 2)
+    print("pandas         : OK (DataFrame creation)")
+except Exception as e:
+    print("pandas         : FAILED —", e)
+
+# matplotlib — create a figure without display
+try:
+    import matplotlib
+    matplotlib.use("Agg")  # non-interactive backend, safe in scripts
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots()
+    ax.plot([0, 1, 2], [0, 1, 0])
+    plt.close(fig)
+    print("matplotlib     : OK (figure created)")
+except Exception as e:
+    print("matplotlib     : FAILED —", e)
+
+
 try:
     import openbabel
     print("openbabel      : OK")
@@ -158,6 +203,26 @@ for line in output.splitlines():
         break
 
 print("\nAll checks passed. The environment is ready for the course exercises.")
+
+# cclib — parse the ORCA output from this section
+try:
+    import cclib
+    data = cclib.io.ccread(str(out_file))
+    assert data is not None, "cclib returned None"
+    assert hasattr(data, "scfenergies"), "cclib: no scfenergies attribute"
+    print(f"cclib          : OK (parsed SCF energy: {data.scfenergies[-1]:.6f} eV)")
+except Exception as e:
+    print("cclib          : FAILED —", e)
+
+# pubchempy — query water by name (requires internet access from compute node)
+try:
+    import pubchempy as pcp
+    compounds = pcp.get_compounds("water", "name")
+    assert len(compounds) > 0, "pubchempy: no results for 'water'"
+    print(f"pubchempy      : OK (CID for water: {compounds[0].cid})")
+except Exception as e:
+    print("pubchempy      : FAILED —", e)
+    print("               → check internet access from compute node")
 
 # ============================================================
 # 5. OPI Calculator interface (input builder + output parsing)
