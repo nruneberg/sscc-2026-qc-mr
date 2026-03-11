@@ -78,9 +78,9 @@ assert resolved, "orca not found on PATH — was orca-env/1.0 module loaded?"
 # ============================================================
 print("\n=== 3. Supporting packages ===")
 import numpy;      print("numpy          :", numpy.__version__)
-import scipy;      print("scipy          :", scipy.__version__)
-import pandas;     print("pandas         :", pandas.__version__)
-import matplotlib; print("matplotlib     :", matplotlib.__version__)
+import scipy
+import pandas
+import matplotlib
 import ase;        print("ASE            :", ase.__version__)
 import cclib;      print("cclib          :", cclib.__version__)
 import nglview;    print("nglview        :", nglview.__version__)
@@ -103,7 +103,7 @@ try:
     A = np.array([[1, 2], [3, 4]])
     eigvals = linalg.eigvals(A)
     assert len(eigvals) == 2
-    print("scipy          : OK (linalg.eigvals)")
+    print(f"scipy          : {scipy.__version__} OK (linalg.eigvals)")
 except Exception as e:
     print("scipy          : FAILED —", e)
 
@@ -112,7 +112,7 @@ try:
     import pandas as pd
     df = pd.DataFrame({"energy": [-74.9, -75.1], "method": ["RHF", "DFT"]})
     assert df.shape == (2, 2)
-    print("pandas         : OK (DataFrame creation)")
+    print(f"pandas         : {pandas.__version__} OK (DataFrame creation)")
 except Exception as e:
     print("pandas         : FAILED —", e)
 
@@ -124,7 +124,7 @@ try:
     fig, ax = plt.subplots()
     ax.plot([0, 1, 2], [0, 1, 0])
     plt.close(fig)
-    print("matplotlib     : OK (figure created)")
+    print(f"matplotlib     : {matplotlib.__version__} OK (figure created)")
 except Exception as e:
     print("matplotlib     : FAILED —", e)
 
@@ -265,6 +265,17 @@ output.parse()
 energy = output.results_properties.geometries[0].single_point_data.finalenergy
 print("OPI SCF energy   :", energy, "Eh")
 print("OPI Calculator   : OK")
+
+# cclib — parse the OPI r2SCAN-3c output (more complete than minimal RHF job)
+try:
+    import cclib
+    opi_out = str(opi_dir / "h2o_opi.out")
+    data = cclib.io.ccread(opi_out)
+    assert data is not None, "cclib returned None"
+    assert hasattr(data, "scfenergies"), "cclib: no scfenergies attribute"
+    print(f"cclib          : OK (parsed SCF energy: {data.scfenergies[-1]:.6f} eV)")
+except Exception as e:
+    print("cclib          : FAILED —", e)
 
 # ============================================================
 # 6. Visualise H2O with nglview (run in its own cell)
