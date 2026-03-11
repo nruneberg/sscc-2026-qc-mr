@@ -78,51 +78,98 @@ except ImportError as e:
     print("openbabel      : MISSING —", e)
 
 # ============================================================
-# 4. Run a minimal ORCA job via OPI
+# 4. Run a minimal ORCA job (raw input file)
 # ============================================================
-print("\n=== 4. ORCA test job via OPI ===")
+print("\n=== 4. ORCA test job ===")
 
-from opi.input.core import OrcaInput
-from opi.input.simple_keywords.method import HF
-from opi.input.simple_keywords.basis_set import BasisSet
-from opi.input.structures.structure import Structure
-from opi.execution.core import run_orca
+import subprocess
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 run_dir = Path(scratch) / f"orca_diag_{timestamp}"
 run_dir.mkdir(parents=True, exist_ok=True)
 print("Run directory  :", run_dir)
 
-# Build a minimal H2O RHF/STO-3G single point via OPI
-inp = (
-    OrcaInput()
-    .add_keywords(HF(), BasisSet.STO_3G)
-    .set_structure(
-        Structure.from_xyz_string(
-            "3\nwater\nO  0.000  0.000  0.000\nH  0.757  0.000  0.586\nH -0.757  0.000  0.586"
-        )
-    )
-    .set_nprocs(ncpus_to_use)
-)
+inp_file = run_dir / "h2o.inp"
+out_file = run_dir / "h2o.out"
 
-result = run_orca(inp, run_dir=run_dir)
+inp_file.write_text(f"""! RHF STO-3G
+%pal nprocs 1 end
+* xyz 0 1
+O  0.000  0.000  0.000
+H  0.757  0.000  0.586
+H -0.757  0.000  0.586
+*
+""")
+
+orca_exe = str(Path(orca_home) / "orca")
+with open(out_file, "w") as fout:
+    result = subprocess.run([orca_exe, str(inp_file)], stdout=fout, stderr=subprocess.STDOUT)
 
 print("Return code    :", result.returncode)
-normal = result.normal_termination
+
+output = out_file.read_text()
+normal = "ORCA TERMINATED NORMALLY" in output
 print("Normal termination:", normal)
+
 if not normal:
     print("\n--- ORCA output (last 30 lines) ---")
-    lines = result.output.splitlines()
-    print("\n".join(lines[-30:]))
+    print("\n".join(output.splitlines()[-30:]))
     raise RuntimeError("ORCA did not terminate normally — check output above.")
 
-print("SCF energy     :", result.properties.scf_energy.value, "Eh")
+# Parse SCF energy from output
+for line in output.splitlines():
+    if "FINAL SINGLE POINT ENERGY" in line:
+        print("SCF energy     :", line.split()[-1], "Eh")
+        break
+
 print("\nAll checks passed. The environment is ready for the course exercises.")
 
 # ============================================================
-# 5. Visualise H2O with nglview (run in its own cell)
+# 5. OPI Calculator interface (input builder + output parsing)
 # ============================================================
-print("\n=== 5. Visualisation (run separately in notebook) ===")
+print("\n=== 5. OPI Calculator interface ===")
+
+from opi.core import Calculator
+from opi.output.core import Output
+from opi.input.simple_keywords import Dft, Task
+from opi.input.structures.structure import Structure
+
+opi_dir = Path(scratch) / f"orca_opi_{timestamp}"
+opi_dir.mkdir(parents=True, exist_ok=True)
+
+xyz_data = """3
+
+O      0.00000   -0.00000    0.00000
+H      0.00000    0.96899    0.00000
+H      0.93966   -0.23409    0.03434
+"""
+with open(opi_dir / "struc.xyz", "w") as f:
+    f.write(xyz_data)
+
+structure = Structure.from_xyz(opi_dir / "struc.xyz")
+
+calc = Calculator(basename="h2o_opi", working_dir=opi_dir)
+calc.structure = structure
+calc.input.add_simple_keywords(Dft.R2SCAN_3C, Task.SP)
+calc.input.ncores = 1
+
+calc.write_input()
+print("OPI input written:", (opi_dir / "h2o_opi.inp").exists())
+calc.run()
+
+output = calc.get_output()
+if not output.terminated_normally():
+    raise RuntimeError("OPI ORCA job did not terminate normally")
+output.parse()
+
+energy = output.results_properties.geometries[0].single_point_data.finalenergy
+print("OPI SCF energy   :", energy, "Eh")
+print("OPI Calculator   : OK")
+
+# ============================================================
+# 6. Visualise H2O with nglview (run in its own cell)
+# ============================================================
+print("\n=== 6. Visualisation (run separately in notebook) ===")
 print("Run the cell below to visualise H2O:")
 print()
 print("  from ase.build import molecule")
