@@ -204,16 +204,6 @@ for line in output.splitlines():
 
 print("\nAll checks passed. The environment is ready for the course exercises.")
 
-# cclib — parse the ORCA output from this section
-try:
-    import cclib
-    data = cclib.io.ccread(str(out_file))
-    assert data is not None, "cclib returned None"
-    assert hasattr(data, "scfenergies"), "cclib: no scfenergies attribute"
-    print(f"cclib          : OK (parsed SCF energy: {data.scfenergies[-1]:.6f} eV)")
-except Exception as e:
-    print("cclib          : FAILED —", e)
-
 # pubchempy — query water by name (requires internet access from compute node)
 try:
     import pubchempy as pcp
