@@ -1,0 +1,27 @@
+# ORCA calculation files
+*.inp
+*.out
+*.gbw
+*.densities
+*.tmp
+*.bas
+*.prop
+*.engrad
+*.hess
+*.trj
+*.xyz
+cb_*/
+cyc/
+h2/
+n2/
+
+# Plots
+*.pdf
+*.png
+
+# Jupyter clutter
+Untitled*.ipynb
+.ipynb_checkpoints/
+*.bibtex
+*.densitiesinfo
+*.property.txt
