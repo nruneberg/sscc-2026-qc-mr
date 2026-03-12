@@ -3,25 +3,32 @@
 *.out
 *.gbw
 *.densities
+*.densitiesinfo
 *.tmp
 *.bas
 *.prop
 *.engrad
 *.hess
 *.trj
-*.xyz
-cb_*/
-cyc/
+*.bibtex
+*.property.txt
+
+# Generated xyz files (created by notebooks)
+cyclobutene.xyz
+h2_*.xyz
+n2_*.xyz
+
+# Generated plots (calculation output)
+*_pec.pdf
+*_no_occ*.pdf
+*_no_occupations.pdf
+cyclobutene_pec.pdf
+
+# Calculation subdirectories
 h2/
 n2/
-
-# Plots
-*.pdf
-*.png
+cyc/
 
 # Jupyter clutter
 Untitled*.ipynb
 .ipynb_checkpoints/
-*.bibtex
-*.densitiesinfo
-*.property.txt
