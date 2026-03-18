@@ -1,3 +1,4 @@
+# tools/utils.py — SSCC 2026 Multireference QC shared utilities
 """
 utils.py — shared helpers for SSCC 2026 Multireference QC notebooks
 --------------------------------------------------------------------
@@ -21,6 +22,16 @@ import numpy as np
 HARTREE_TO_EV    = 27.2114
 HARTREE_TO_KCAL  = 627.509
 HARTREE_TO_KJMOL = 2625.5
+
+# Number of CPU cores available for ORCA jobs.
+# On Mahti (sinteractive, OOD, sbatch) this is set by SLURM automatically.
+# On a local workstation without SLURM it falls back to 1.
+NPROCS = int(os.environ.get('SLURM_CPUS_PER_TASK', 1))
+
+# Number of CPU cores available for ORCA.
+# On Mahti (SLURM): picks up SLURM_CPUS_PER_TASK from the job allocation.
+# On a local workstation: falls back to 1.
+NPROCS = int(os.environ.get('SLURM_CPUS_PER_TASK', 1))
 
 # ── ORCA executable ──────────────────────────────────────────────────────
 
@@ -46,8 +57,13 @@ ORCA = _get_orca()
 # File extensions that indicate stale calculation output
 _STALE_PATTERNS = [
     '*.gbw', '*.out', '*.inp', '*.densities', '*.densitiesinfo',
-    '*.tmp', '*.bas', '*.prop', '*.engrad', '*.hess', '*.trj',
-    '*.bibtex', '*.property.txt',
+    '*.tmp', '*.bas', '*.bas0', '*.bas1', '*.bas2', '*.bas3', '*.bas4', '*.bas5',
+    '*.prop', '*.engrad', '*.hess', '*.trj',
+    '*.bibtex', '*.property.txt', '*.property.json', '*.json',
+    '*.hostnames', '*.cube', '*.xyz', '*.pdf',
+    '*.casinp.tmp.VEC.tmp.0', '*.cpscfdata.tmp.0', '*.propint.tmp.0',
+    '*.mo*a.cube', '*.mo*b.cube',
+    '*.casci*', '*.cpcm*',
 ]
 
 def _count_stale(work_dir: Path) -> list:
@@ -154,7 +170,7 @@ def run_orca(label: str, input_text: str, work_dir: Path = Path('.')) -> Path:
     inp.write_text(input_text)
     with open(out, 'w') as fh:
         subprocess.run(
-            [ORCA, str(inp)],
+            [ORCA, f"{label}.inp"],  # bare filename — cwd is already work_dir
             stdout=fh,
             stderr=subprocess.STDOUT,
             cwd=str(work_dir),
@@ -183,6 +199,11 @@ def get_casscf_energy(out_file) -> float:
     Returns float('nan') if not found.
     """
     text = Path(out_file).read_text()
+    # ORCA 6.x: "Final CASSCF energy       : -154.823760436 Eh"
+    m = re.findall(r'Final CASSCF energy\s*:\s*(-?\d+\.\d+)', text)
+    if m:
+        return float(m[-1])
+    # fallback for older ORCA versions
     m = re.findall(r'CASSCF TOTAL ENERGY:\s+(-?\d+\.\d+)', text)
     return float(m[-1]) if m else float('nan')
 
@@ -194,6 +215,11 @@ def get_nevpt2_energy(out_file) -> float:
     Returns float('nan') if not found.
     """
     text = Path(out_file).read_text()
+    # ORCA 6.x: "Total Energy (E0+dE)    : E  = -155.32997444957246"
+    m = re.findall(r'Total Energy \(E0\+dE\)\s*:\s*E\s*=\s*(-?\d+\.\d+)', text)
+    if m:
+        return float(m[-1])
+    # fallback for older ORCA versions
     m = re.findall(r'NEVPT2 Total Energy:\s+(-?\d+\.\d+)', text)
     return float(m[-1]) if m else float('nan')
 
@@ -213,16 +239,35 @@ def get_no_occupations(out_file) -> list:
     """
     Extract CASSCF natural orbital occupation numbers, sorted descending.
 
-    Returns a list of floats, or an empty list if not found.
+    Parses the ORBITAL ENERGIES table in ORCA 6.x CASSCF output:
+        NO   OCC          E(Eh)            E(eV)
+         0   1.9764      -0.584955       -15.9174
+         1   0.0236       0.619446        16.8560
+
+    Returns only non-zero occupations (active space), sorted descending.
+    Returns an empty list if not found.
     """
     text = Path(out_file).read_text()
-    blocks = re.findall(
-        r'Natural Orbital Occupation Numbers.*?\n((?:\s*\d+\.\d+\s*\n?)+)',
+
+    # ORCA 6.x: parse ORBITAL ENERGIES table after CASSCF RESULTS
+    blocks = list(re.finditer(
+        r'ORBITAL ENERGIES\s*\n-+\n\s*NO\s+OCC\s+E\(Eh\).*?\n'
+        r'((?:\s*\d+\s+\d+\.\d+\s+-?\d+\.\d+\s+-?\d+\.\d+\s*\n)+)',
         text, re.IGNORECASE
-    )
-    if not blocks:
-        return []
-    return sorted([float(x) for x in blocks[-1].split()], reverse=True)
+    ))
+    if blocks:
+        block = blocks[-1].group(1)
+        occs = [float(line.split()[1])
+                for line in block.strip().split('\n')
+                if line.strip()]
+        return sorted([o for o in occs if o > 1e-6], reverse=True)
+
+    # Fallback: N(occ)= line from CASSCF iterations
+    m = re.findall(r'N\(occ\)=\s*([\d\.\s]+)', text)
+    if m:
+        return sorted([float(x) for x in m[-1].split()], reverse=True)
+
+    return []
 
 
 def terminated_normally(out_file) -> bool:
@@ -292,3 +337,150 @@ def atoms_to_xyz_block(atoms: list) -> str:
     lines = [f"{el:2s}  {x:12.6f}  {y:12.6f}  {z:12.6f}"
              for el, x, y, z in atoms]
     return '\n'.join(lines)
+
+
+# ── Orbital visualization ─────────────────────────────────────────────────
+
+def plot_orbital(basename: str, mo_index: int, resolution: int = 60,
+                 work_dir: Path = None) -> str:
+    """
+    Generate a cube string for a given MO using OPI's Output.plot_mo().
+
+    Parameters
+    ----------
+    basename : str
+        ORCA job basename (without extension), e.g. 'h2_seed_casscf'.
+    mo_index : int
+        0-based MO index to plot.
+    resolution : int
+        Grid resolution per axis (default 60).
+    work_dir : Path, optional
+        Working directory containing the .gbw and .out files.
+
+    Returns
+    -------
+    str
+        Cube file contents as a string, ready for py3Dmol.
+
+    Examples
+    --------
+    >>> cube = plot_orbital('h2_seed_casscf', mo_index=0, work_dir=work_dir)
+    >>> show_orbital(cube, label='σ_g  (occ = 1.976)')
+    """
+    try:
+        from opi.output.core import Output
+    except ImportError:
+        raise ImportError("orca-pi (OPI) is required for orbital visualization.")
+
+    output = Output(basename, working_dir=work_dir, parse=True)
+    cube_output = output.plot_mo(mo_index, resolution=resolution)
+    return cube_output.cube
+
+
+def show_orbital(cube_file, isoval: float = 0.05,
+                 label: str = '',
+                 width: int = 500, height: int = 400):
+    """
+    Visualize an orbital from a Gaussian cube file using py3Dmol.
+
+    Shows positive phase in blue and negative phase in red.
+
+    Parameters
+    ----------
+    cube_file : str or Path
+        Path to the .cube file.
+    isoval : float
+        Isovalue for the orbital surface (default 0.05).
+    label : str
+        Optional label printed above the viewer.
+    width, height : int
+        Viewer dimensions in pixels.
+
+    Examples
+    --------
+    >>> cube = plot_orbital(work_dir / 'h2_seed_casscf.gbw', mo_index=0)
+    >>> show_orbital(cube, isoval=0.05, label='σ_g  (occ = 1.976)')
+    """
+    try:
+        import py3Dmol
+    except ImportError:
+        raise ImportError("py3Dmol is required for orbital visualization.")
+
+    # Accept either a cube string directly or a path to a cube file
+    if isinstance(cube_file, str) and cube_file.strip().startswith('CUBE'):
+        cube_text = cube_file
+    elif isinstance(cube_file, str) and len(cube_file) > 5 and '\n' in cube_file:
+        cube_text = cube_file  # already a cube string
+    else:
+        cube_text = Path(cube_file).read_text()
+
+    if label:
+        print(label)
+
+    view = py3Dmol.view(width=width, height=height)
+    view.addVolumetricData(cube_text, 'cube',
+                           {'isoval':  isoval,
+                            'color':   'blue',
+                            'opacity': 0.75})
+    view.addVolumetricData(cube_text, 'cube',
+                           {'isoval': -isoval,
+                            'color':   'red',
+                            'opacity': 0.75})
+    # Add molecular skeleton from cube header
+    view.addModel(cube_text, 'cube')
+    view.setStyle({'stick': {'colorscheme': 'grayCarbon', 'radius': 0.1}})
+    view.zoomTo()
+    return view
+
+
+def orbital_gallery(basename: str, mo_indices: list, occupations: list = None,
+                    labels: list = None, isoval: float = 0.08,
+                    resolution: int = 60, work_dir=None):
+    """
+    Display a gallery of orbitals using py3Dmol, one per cell output.
+
+    Parameters
+    ----------
+    basename : str
+        ORCA job basename (without extension), e.g. 'h2_seed_casscf'.
+    mo_indices : list of int
+        List of 0-based MO indices to display.
+    occupations : list of float, optional
+        Occupation numbers to annotate each orbital.
+    labels : list of str, optional
+        Labels for each orbital (e.g. ['σ_g', 'σ_u*']).
+        Defaults to 'MO N'.
+    isoval : float
+        Isovalue for orbital surfaces (default 0.08).
+    resolution : int
+        Grid resolution per axis (default 60).
+    work_dir : Path, optional
+        Working directory.
+
+    Examples
+    --------
+    >>> orbital_gallery(
+    ...     'h2_seed_casscf',
+    ...     mo_indices=[0, 1],
+    ...     occupations=[1.976, 0.024],
+    ...     labels=['σ_g (bonding)', 'σ_u* (antibonding)'],
+    ...     work_dir=work_dir,
+    ... )
+    """
+    if labels is None:
+        labels = [f'MO {i}' for i in mo_indices]
+    if occupations is None:
+        occupations = [None] * len(mo_indices)
+
+    views = []
+    for idx, (mo, occ, lbl) in enumerate(zip(mo_indices, occupations, labels)):
+        cube = plot_orbital(basename, mo, resolution=resolution, work_dir=work_dir)
+        if cube is None:
+            print(f"Skipping MO {mo} — cube generation failed")
+            continue
+        ann = f"{lbl}  (occ = {occ:.4f})" if occ is not None else lbl
+        view = show_orbital(cube, isoval=isoval, label=ann)
+        view.show()
+        views.append(view)
+
+    return views
