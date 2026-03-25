@@ -6,7 +6,20 @@ Usage in notebooks:
     from utils import setup_workdir, run_orca, get_energy, get_no_occupations
 
 Each notebook calls setup_workdir('<name>') at the top to create and
-validate its working directory (e.g. 'h2', 'n2', 'cyc').
+validate its working directory (e.g. 'h2', 'n2', 'ethylene').
+
+Geometry helpers
+----------------
+parse_xyz(filename)
+    Parse an xyz file into a list of (element, x, y, z) tuples.
+bond_length(atoms, i, j)
+    Distance between atoms i and j in an atom list.
+get_distance(xyz_file, i, j)
+    Distance between atoms i and j directly from an xyz file.
+stretch_bond(atoms, i, j, new_dist)
+    Return a new atom list with bond i-j stretched to new_dist.
+atoms_to_xyz_block(atoms)
+    Format atom list as an ORCA geometry block string.
 """
 
 import os
@@ -26,11 +39,6 @@ HARTREE_TO_KJMOL = 2625.5
 # Number of CPU cores available for ORCA jobs.
 # On Mahti (sinteractive, OOD, sbatch) this is set by SLURM automatically.
 # On a local workstation without SLURM it falls back to 1.
-NPROCS = int(os.environ.get('SLURM_CPUS_PER_TASK', 1))
-
-# Number of CPU cores available for ORCA.
-# On Mahti (SLURM): picks up SLURM_CPUS_PER_TASK from the job allocation.
-# On a local workstation: falls back to 1.
 NPROCS = int(os.environ.get('SLURM_CPUS_PER_TASK', 1))
 
 # ── ORCA executable ──────────────────────────────────────────────────────
@@ -81,7 +89,7 @@ def setup_workdir(name: str, auto_clean: bool = False) -> Path:
     Parameters
     ----------
     name : str
-        Subdirectory name, e.g. 'h2', 'n2', 'cyc'.
+        Subdirectory name, e.g. 'h2', 'n2', 'ethylene'.
     auto_clean : bool
         If True, silently remove stale files without asking.
         Default False — warn and let the student decide.
@@ -93,7 +101,7 @@ def setup_workdir(name: str, auto_clean: bool = False) -> Path:
 
     Examples
     --------
-    >>> work_dir = setup_workdir('cyc')
+    >>> work_dir = setup_workdir('ethylene')
     >>> # Then prefix all file paths: work_dir / 'label.inp'
     """
     work_dir = Path(name)
@@ -126,7 +134,7 @@ def clean_workdir(name: str) -> None:
     Parameters
     ----------
     name : str
-        Subdirectory name, e.g. 'h2', 'n2', 'cyc'.
+        Subdirectory name, e.g. 'h2', 'n2', 'ethylene'.
     """
     work_dir = Path(name)
     if not work_dir.exists():
@@ -146,7 +154,8 @@ def clean_workdir(name: str) -> None:
 
 # ── ORCA job runner ───────────────────────────────────────────────────────
 
-def run_orca(label: str, input_text: str, work_dir: Path = Path('.')) -> Path:
+def run_orca(label: str, input_text: str, work_dir: Path = Path('.'),
+             nprocs: int = None) -> Path:
     """
     Write an ORCA input file, run ORCA, return path to the .out file.
 
@@ -159,18 +168,37 @@ def run_orca(label: str, input_text: str, work_dir: Path = Path('.')) -> Path:
     work_dir : Path
         Directory in which to write input/output files.
         Defaults to current directory.
+    nprocs : int, optional
+        Number of MPI processes. If > 1 and no %pal block is present in
+        input_text, a '%pal nprocs N end' block is prepended automatically.
+        If None (default), no %pal block is injected — single-core safe.
+        Use NPROCS from this module for jobs that should use all available
+        cores, or pass 1 explicitly for small systems where parallelism
+        would cause ORCA to abort (e.g. H2 with a minimal basis).
 
     Returns
     -------
     Path
         Path to the .out file.
+
+    Examples
+    --------
+    >>> # Single-core (safe for small systems)
+    >>> outfile = run_orca('h2_scan', inp, work_dir)
+
+    >>> # Parallel (use all Slurm-allocated cores)
+    >>> from utils import NPROCS
+    >>> outfile = run_orca('ethylene_scan', inp, work_dir, nprocs=NPROCS)
     """
+    if nprocs is not None and nprocs > 1 and '%pal' not in input_text.lower():
+        input_text = f'%pal nprocs {nprocs} end\n\n' + input_text
+
     inp = work_dir / f"{label}.inp"
     out = work_dir / f"{label}.out"
     inp.write_text(input_text)
     with open(out, 'w') as fh:
         subprocess.run(
-            [ORCA, f"{label}.inp"],  # bare filename — cwd is already work_dir
+            [ORCA, f"{label}.inp"],
             stdout=fh,
             stderr=subprocess.STDOUT,
             cwd=str(work_dir),
@@ -299,10 +327,59 @@ def parse_xyz(filename) -> list:
 
 
 def bond_length(atoms: list, i: int, j: int) -> float:
-    """Return the distance between atoms i and j (0-indexed)."""
+    """
+    Return the distance between atoms i and j (0-indexed) in an atom list.
+
+    Parameters
+    ----------
+    atoms : list of (element, x, y, z) tuples
+        As returned by parse_xyz().
+    i, j : int
+        0-based atom indices.
+
+    Returns
+    -------
+    float
+        Distance in Å.
+
+    See Also
+    --------
+    get_distance : convenience wrapper that reads directly from an xyz file.
+    """
     xi, yi, zi = atoms[i][1:]
     xj, yj, zj = atoms[j][1:]
     return float(np.sqrt((xi - xj)**2 + (yi - yj)**2 + (zi - zj)**2))
+
+
+def get_distance(xyz_file, i: int, j: int) -> float:
+    """
+    Return the distance between atoms i and j (0-indexed) in an xyz file.
+
+    Convenience wrapper around parse_xyz() + bond_length() for use as a
+    sort key or in list comprehensions without loading the full atom list.
+
+    Parameters
+    ----------
+    xyz_file : str or Path
+        Path to the xyz file.
+    i, j : int
+        0-based atom indices.
+
+    Returns
+    -------
+    float
+        Distance in Å.
+
+    Examples
+    --------
+    >>> # O-C1 distance in an ethylene+O scan step (atoms 0 and 2)
+    >>> r = get_distance('ethylene/scan_nevpt2.001.xyz', 0, 2)
+
+    >>> # Sort scan xyz files by O-C1 distance
+    >>> files = sorted(work_dir.glob('scan_nevpt2.0*.xyz'),
+    ...                key=lambda f: get_distance(f, 0, 2))
+    """
+    return bond_length(parse_xyz(xyz_file), i, j)
 
 
 def stretch_bond(atoms: list, i: int, j: int, new_dist: float) -> list:
@@ -310,6 +387,19 @@ def stretch_bond(atoms: list, i: int, j: int, new_dist: float) -> list:
     Return a new atom list with bond i–j stretched to new_dist.
 
     The midpoint of the bond is kept fixed; both atoms move symmetrically.
+
+    Parameters
+    ----------
+    atoms : list of (element, x, y, z) tuples
+        As returned by parse_xyz().
+    i, j : int
+        0-based atom indices defining the bond to stretch.
+    new_dist : float
+        Target bond length in Å.
+
+    Returns
+    -------
+    list of (element, x, y, z) tuples
     """
     atoms = [list(a) for a in atoms]
     xi, yi, zi = atoms[i][1:]
@@ -333,6 +423,16 @@ def atoms_to_xyz_block(atoms: list) -> str:
 
     Returns a string with one 'El  x  y  z' line per atom,
     suitable for embedding between '* xyz charge mult' and '*'.
+
+    Parameters
+    ----------
+    atoms : list of (element, x, y, z) tuples
+        As returned by parse_xyz().
+
+    Returns
+    -------
+    str
+        Multi-line geometry block.
     """
     lines = [f"{el:2s}  {x:12.6f}  {y:12.6f}  {z:12.6f}"
              for el, x, y, z in atoms]
@@ -361,11 +461,6 @@ def plot_orbital(basename: str, mo_index: int, resolution: int = 60,
     -------
     str
         Cube file contents as a string, ready for py3Dmol.
-
-    Examples
-    --------
-    >>> cube = plot_orbital('h2_seed_casscf', mo_index=0, work_dir=work_dir)
-    >>> show_orbital(cube, label='σ_g  (occ = 1.976)')
     """
     try:
         from opi.output.core import Output
@@ -388,29 +483,23 @@ def show_orbital(cube_file, isoval: float = 0.05,
     Parameters
     ----------
     cube_file : str or Path
-        Path to the .cube file.
+        Path to the .cube file, or cube file contents as a string.
     isoval : float
         Isovalue for the orbital surface (default 0.05).
     label : str
         Optional label printed above the viewer.
     width, height : int
         Viewer dimensions in pixels.
-
-    Examples
-    --------
-    >>> cube = plot_orbital(work_dir / 'h2_seed_casscf.gbw', mo_index=0)
-    >>> show_orbital(cube, isoval=0.05, label='σ_g  (occ = 1.976)')
     """
     try:
         import py3Dmol
     except ImportError:
         raise ImportError("py3Dmol is required for orbital visualization.")
 
-    # Accept either a cube string directly or a path to a cube file
     if isinstance(cube_file, str) and cube_file.strip().startswith('CUBE'):
         cube_text = cube_file
     elif isinstance(cube_file, str) and len(cube_file) > 5 and '\n' in cube_file:
-        cube_text = cube_file  # already a cube string
+        cube_text = cube_file
     else:
         cube_text = Path(cube_file).read_text()
 
@@ -426,7 +515,6 @@ def show_orbital(cube_file, isoval: float = 0.05,
                            {'isoval': -isoval,
                             'color':   'red',
                             'opacity': 0.75})
-    # Add molecular skeleton from cube header
     view.addModel(cube_text, 'cube')
     view.setStyle({'stick': {'colorscheme': 'grayCarbon', 'radius': 0.1}})
     view.zoomTo()
@@ -456,16 +544,6 @@ def orbital_gallery(basename: str, mo_indices: list, occupations: list = None,
         Grid resolution per axis (default 60).
     work_dir : Path, optional
         Working directory.
-
-    Examples
-    --------
-    >>> orbital_gallery(
-    ...     'h2_seed_casscf',
-    ...     mo_indices=[0, 1],
-    ...     occupations=[1.976, 0.024],
-    ...     labels=['σ_g (bonding)', 'σ_u* (antibonding)'],
-    ...     work_dir=work_dir,
-    ... )
     """
     if labels is None:
         labels = [f'MO {i}' for i in mo_indices]
