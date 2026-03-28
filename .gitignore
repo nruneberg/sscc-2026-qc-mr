@@ -1,20 +1,24 @@
+# ORCA calculation output
 *.out
 *.inp
 *.gbw
 *.densities
 *.tmp
 *.xyz
+
+# Python
 __pycache__/
-.ipynb_checkpoints/
 *.pyc
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Calculation directories
 notebooks/ethylene/
+notebooks/h2/
 notebooks/oh_scan/
 notebooks/test/
+
+# Scratch and local assets
 notebooks/scratch/
-notebooks/ethylene/
-notebooks/oh_scan/
-notebooks/test/
-notebooks/scratch/
-notebooks/ethylene/
-notebooks/oh_scan/
-notebooks/test/
+notebooks/assets/
