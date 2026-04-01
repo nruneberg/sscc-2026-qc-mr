@@ -199,3 +199,80 @@ def show_molecule(molecule, size=(500, 400), style='ball+stick',
     nv.camera = 'orthographic'
     nv.display()
     return nv
+
+
+############## Functions for orbital phase alignment ##############
+
+def phase_align_cube(cube_str, reference_cube_str):
+    """
+    Align the phase of a cube file to a reference cube file.
+
+    Natural orbital phases are arbitrary — ORCA may flip the sign between
+    geometry steps even with warm-starting. This function ensures visual
+    continuity in orbital galleries by flipping the phase of ``cube_str``
+    if its overlap integral with ``reference_cube_str`` is negative.
+
+    Parameters
+    ----------
+    cube_str : str
+        Cube file content (as returned by plot_orbital) to be phase-aligned.
+    reference_cube_str : str
+        Reference cube file content to align against. Typically the orbital
+        at the first geometry in a sequence (e.g. R=2.2 Å).
+
+    Returns
+    -------
+    str
+        Cube file content with phase aligned to reference. If the overlap
+        is already positive, the input is returned unchanged.
+
+    Notes
+    -----
+    Uses the dot product of the volumetric data arrays as a proxy for the
+    overlap integral. This is valid when both cubes share the same grid,
+    which is guaranteed when both come from plot_orbital on the same system.
+
+    Examples
+    --------
+    >>> cubes = []
+    >>> for col, (tag, mo_idx) in enumerate(zip(tags_diag, mo_indices)):
+    ...     cube = plot_orbital(tag, mo_index=mo_idx, work_dir=work_dir)
+    ...     if col == 0:
+    ...         ref_cube = cube
+    ...     else:
+    ...         cube = phase_align_cube(cube, ref_cube)
+    ...     cubes.append(cube)
+    """
+    import numpy as np
+
+    def _parse_cube(cube):
+        lines = cube.strip().splitlines()
+        # Cube format: 2 comment lines, 1 natoms+origin line, 3 axis lines,
+        # natoms atom lines, then volumetric data
+        natoms = abs(int(lines[2].split()[0]))
+        data_start = 6 + natoms
+        values = np.array([
+            float(v)
+            for line in lines[data_start:]
+            for v in line.split()
+        ])
+        return lines, data_start, values
+
+    lines1, data_start1, v1 = _parse_cube(cube_str)
+    _,      _,           v2 = _parse_cube(reference_cube_str)
+
+    # Truncate to same length in case of minor grid differences
+    n = min(len(v1), len(v2))
+    overlap = np.dot(v1[:n], v2[:n])
+
+    if overlap >= 0:
+        return cube_str  # phases already aligned
+
+    # Flip phase: negate all volumetric data
+    neg_values = -v1
+    header = '\n'.join(lines1[:data_start1])
+    data_lines = []
+    for i in range(0, len(neg_values), 6):
+        chunk = neg_values[i:i+6]
+        data_lines.append('  '.join(f'{v:12.5E}' for v in chunk))
+    return header + '\n' + '\n'.join(data_lines) + '\n'
