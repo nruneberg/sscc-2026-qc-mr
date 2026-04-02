@@ -261,14 +261,17 @@ def phase_align_cube(cube_str, reference_cube_str):
     lines1, data_start1, v1 = _parse_cube(cube_str)
     _,      _,           v2 = _parse_cube(reference_cube_str)
 
-    # Use sign of largest-magnitude voxel as phase indicator.
-    # More robust than dot product when orbital shape changes significantly
-    # between geometries — the dot product can be positive even when the
-    # visual phase is inverted if the orbital redistributes weight.
-    sign1 = np.sign(v1[np.argmax(np.abs(v1))])
-    sign2 = np.sign(v2[np.argmax(np.abs(v2))])
+    # Phase alignment strategy: find where the reference orbital has its
+    # largest amplitude, then check if the target has the same sign there.
+    # This is more robust than comparing global max-voxel signs or dot products
+    # when the orbital redistributes weight between geometry steps.
+    # The only failure case is if the reference maximum falls in a nodal
+    # region of the target — unlikely for adjacent warm-started geometries.
+    ref_max_idx = np.argmax(np.abs(v2))          # where is reference largest?
+    sign_ref    = np.sign(v2[ref_max_idx])        # reference sign there
+    sign_target = np.sign(v1[ref_max_idx])        # target sign at same position
 
-    if sign1 == sign2:
+    if sign_target == sign_ref:
         return cube_str  # phases already aligned
 
     # Flip phase: negate all volumetric data
