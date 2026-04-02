@@ -2,9 +2,10 @@
 ## Multireference Quantum Chemistry with ORCA
 
 ### Notebooks
+
 - **Notebook 1** — The H₂ problem: why single-reference methods fail
-- **Notebook 2** — N₂: when the gold standard fails *(in preparation)*
-- **Notebook 3** — Ethane C–C homolysis: a real chemical problem *(in preparation)*
+- **Notebook 2** — O(³P) + ethylene: why transition states are multireference
 
 ### Requirements
-Designed for the Jupyter for Courses environment on CSC Mahti.
+
+Designed for the Jupyter for Courses environment on CSC Mahti (Open OnDemand JupyterLab, Tykky container, ORCA 6.1.1).
