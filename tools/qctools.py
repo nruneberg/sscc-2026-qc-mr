@@ -261,11 +261,14 @@ def phase_align_cube(cube_str, reference_cube_str):
     lines1, data_start1, v1 = _parse_cube(cube_str)
     _,      _,           v2 = _parse_cube(reference_cube_str)
 
-    # Truncate to same length in case of minor grid differences
-    n = min(len(v1), len(v2))
-    overlap = np.dot(v1[:n], v2[:n])
+    # Use sign of largest-magnitude voxel as phase indicator.
+    # More robust than dot product when orbital shape changes significantly
+    # between geometries — the dot product can be positive even when the
+    # visual phase is inverted if the orbital redistributes weight.
+    sign1 = np.sign(v1[np.argmax(np.abs(v1))])
+    sign2 = np.sign(v2[np.argmax(np.abs(v2))])
 
-    if overlap >= 0:
+    if sign1 == sign2:
         return cube_str  # phases already aligned
 
     # Flip phase: negate all volumetric data
