@@ -208,40 +208,36 @@ def phase_align_cube(cube_str, reference_cube_str):
     Align the phase of a cube file to a reference cube file.
 
     Natural orbital phases are arbitrary — ORCA may flip the sign between
-    geometry steps even with warm-starting. This function ensures visual
-    continuity in orbital galleries by flipping the phase of ``cube_str``
-    if its overlap integral with ``reference_cube_str`` is negative.
+    geometry steps even with warm-starting. This function attempts to ensure
+    visual continuity in orbital galleries by flipping the phase of
+    ``cube_str`` if it appears misaligned with ``reference_cube_str``.
+
+    .. warning::
+        This function is unreliable when the orbital character changes
+        significantly between geometries. The heuristic used (sign of the
+        target cube at the position of the reference maximum) can fail when
+        the reference maximum falls near a nodal region of the target, or
+        when the dominant lobe shifts region between steps. In practice this
+        causes incorrect flips for some orbital rows in the 4-column gallery.
+
+        A robust implementation requires computing the overlap between MO
+        coefficient vectors from the .gbw files — this is the planned
+        ``match_orbitals()`` function in qctools.py. Until that is
+        implemented, phase_align_cube should not be used in production.
+        The gallery notebook uses no phase alignment and notes that orbital
+        sign is arbitrary and carries no physical meaning.
 
     Parameters
     ----------
     cube_str : str
-        Cube file content (as returned by plot_orbital) to be phase-aligned.
+        Cube file content to be phase-aligned.
     reference_cube_str : str
-        Reference cube file content to align against. Typically the orbital
-        at the first geometry in a sequence (e.g. R=2.2 Å).
+        Reference cube file content to align against.
 
     Returns
     -------
     str
-        Cube file content with phase aligned to reference. If the overlap
-        is already positive, the input is returned unchanged.
-
-    Notes
-    -----
-    Uses the dot product of the volumetric data arrays as a proxy for the
-    overlap integral. This is valid when both cubes share the same grid,
-    which is guaranteed when both come from plot_orbital on the same system.
-
-    Examples
-    --------
-    >>> cubes = []
-    >>> for col, (tag, mo_idx) in enumerate(zip(tags_diag, mo_indices)):
-    ...     cube = plot_orbital(tag, mo_index=mo_idx, work_dir=work_dir)
-    ...     if col == 0:
-    ...         ref_cube = cube
-    ...     else:
-    ...         cube = phase_align_cube(cube, ref_cube)
-    ...     cubes.append(cube)
+        Cube file content, possibly with flipped phase.
     """
     import numpy as np
 
