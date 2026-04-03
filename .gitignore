@@ -22,3 +22,4 @@ notebooks/test/
 # Scratch and local assets
 notebooks/scratch/
 notebooks/assets/
+*.cube
