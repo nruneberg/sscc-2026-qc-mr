@@ -300,8 +300,8 @@ def _extract_relaxed_geom(outfile):
     return '\n'.join(gl) if gl else None
 
 
-def run_casscf_scan(R_grid, start_geometry, work_dir, nprocs=1,
-                    nel=6, norb=6, mult=3, basis='cc-pVDZ',
+def run_casscf_scan(R_grid, start_geometry, work_dir, inp_template,
+                    nprocs=1, nel=6, norb=6, mult=3, basis='cc-pVDZ',
                     maxiter=200):
     """
     Run a CASSCF constrained relaxed scan on a custom R grid.
@@ -363,28 +363,14 @@ def run_casscf_scan(R_grid, start_geometry, work_dir, nprocs=1,
 
         moread = f'! MORead\n%moinp "{prev_gbw}"\n\n' if prev_gbw else ''
 
-        inp = f"""{moread}! CASSCF {basis} TightSCF Opt
-
-%maxcore 4000
-
-%geom
-  Constraints
-    {{B 0 2 {R:.3f} C}}
-  end
-end
-
-%casscf
-  nel {nel}
-  norb {norb}
-  mult {mult}
-  nroots 1
-  MaxIter {maxiter}
-end
-
-* xyz 0 3
-{prev_geom}
-*
-"""
+        inp = inp_template.format(
+            moread=moread,
+            R=R,
+            nel=nel, norb=norb, mult=mult,
+            maxiter=maxiter,
+            basis=basis,
+            geom=prev_geom,
+        )
         print(f'R = {R:.2f} A ...', flush=True)
         outfile = run_orca(tag, inp, work_dir, nprocs=nprocs)
         E  = get_energy(outfile)
@@ -402,8 +388,8 @@ end
     return results
 
 
-def run_nevpt2_scan(casscf_results, work_dir, nprocs=1,
-                    nel=6, norb=6, mult=3, basis='cc-pVDZ'):
+def run_nevpt2_scan(casscf_results, work_dir, inp_template,
+                    nprocs=1, nel=6, norb=6, mult=3, basis='cc-pVDZ'):
     """
     Run NEVPT2 single points on CASSCF-relaxed geometries.
 
@@ -452,23 +438,12 @@ def run_nevpt2_scan(casscf_results, work_dir, nprocs=1,
             lines = xyz.read_text().splitlines()
             geom  = '\n'.join(lines[2:])
 
-        inp = f"""! NEVPT2 {basis} TightSCF MORead
-
-%maxcore 4000
-
-%moinp "{gbw_file}"
-
-%casscf
-  nel {nel}
-  norb {norb}
-  mult {mult}
-  nroots 1
-end
-
-* xyz 0 3
-{geom}
-*
-"""
+        inp = inp_template.format(
+            gbw_file=gbw_file,
+            nel=nel, norb=norb, mult=mult,
+            basis=basis,
+            geom=geom,
+        )
         print(f'R = {R:.2f} A ...', flush=True)
         outfile = run_orca(tag, inp, work_dir, nprocs=nprocs)
         E = get_nevpt2_energy(outfile)
@@ -479,7 +454,8 @@ end
     return results
 
 
-def run_b3lyp_scan(casscf_results, work_dir, nprocs=1, basis='cc-pVDZ'):
+def run_b3lyp_scan(casscf_results, work_dir, inp_template,
+                   nprocs=1, basis='cc-pVDZ'):
     """
     Run B3LYP single points on CASSCF-relaxed geometries.
 
@@ -532,19 +508,11 @@ def run_b3lyp_scan(casscf_results, work_dir, nprocs=1, basis='cc-pVDZ'):
 
         moread = f'! MORead\n%moinp "{prev_gbw}"\n\n' if prev_gbw else ''
 
-        inp = f"""{moread}! B3LYP {basis} TightSCF SlowConv
-
-%maxcore 4000
-
-%scf
-  MaxIter 500
-  STABPerform true
-end
-
-* xyz 0 3
-{geom}
-*
-"""
+        inp = inp_template.format(
+            moread=moread,
+            basis=basis,
+            geom=geom,
+        )
         print(f'R = {R:.2f} A ...', flush=True)
         outfile = run_orca(tag, inp, work_dir, nprocs=nprocs)
         E = get_energy(outfile)
