@@ -278,3 +278,275 @@ def phase_align_cube(cube_str, reference_cube_str):
         chunk = neg_values[i:i+6]
         data_lines.append('  '.join(f'{v:12.5E}' for v in chunk))
     return header + '\n' + '\n'.join(data_lines) + '\n'
+
+
+############## Functions for PES scan (NB02 O(3P)+ethylene) ##############
+
+def _extract_relaxed_geom(outfile):
+    """Extract last relaxed geometry from ORCA output file."""
+    from pathlib import Path
+    text = Path(outfile).read_text()
+    idx = text.rfind('CARTESIAN COORDINATES (ANGSTROEM)')
+    if idx < 0:
+        return None
+    block = text[idx:].splitlines()
+    gl = []
+    for line in block[2:]:
+        parts = line.split()
+        if len(parts) == 4 and parts[0].isalpha():
+            gl.append(f'{parts[0]:2s}  {float(parts[1]):12.6f}  {float(parts[2]):12.6f}  {float(parts[3]):12.6f}')
+        elif gl:
+            break
+    return '\n'.join(gl) if gl else None
+
+
+def run_casscf_scan(R_grid, start_geometry, work_dir, nprocs=1,
+                    nel=6, norb=6, mult=3, basis='cc-pVDZ',
+                    maxiter=200):
+    """
+    Run a CASSCF constrained relaxed scan on a custom R grid.
+
+    Each point is a geometry optimisation with the O-C1 distance
+    (atoms 0 and 2) fixed at the target R. Points are computed inward
+    (large R first) with warm-starting: orbitals and relaxed geometry
+    from each step are passed to the next via MORead.
+
+    Already-converged points are skipped on re-run — the function is
+    safe to call multiple times if the calculation was interrupted.
+
+    Parameters
+    ----------
+    R_grid : list of float
+        O-C1 distances in Angstrom, ordered large R first.
+    start_geometry : str
+        XYZ coordinate block for the starting geometry.
+    work_dir : Path
+        Working directory for ORCA input/output files.
+    nprocs : int
+        Number of MPI processes (default 1).
+    nel, norb, mult : int
+        CASSCF active space parameters.
+    basis : str
+        Basis set keyword.
+    maxiter : int
+        Maximum CASSCF macro-iterations.
+
+    Returns
+    -------
+    list of (float, float)
+        List of (R, energy_Eh) pairs in R_grid order.
+    """
+    from pathlib import Path
+    from utils import run_orca, get_energy, terminated_normally
+
+    work_dir = Path(work_dir)
+    results  = []
+    prev_gbw  = None
+    prev_geom = start_geometry
+
+    for R in R_grid:
+        tag     = f'casscf_R{R:.2f}'.replace('.', 'p')
+        gbw_out = (work_dir / tag).with_suffix('.gbw').resolve()
+        out_file = work_dir / f'{tag}.out'
+
+        # Skip if already successfully completed
+        if out_file.exists() and terminated_normally(out_file):
+            E = get_energy(out_file)
+            print(f'R = {R:.2f} A ... skipped (already done)  E = {E:.6f} Eh')
+            results.append((R, E))
+            if gbw_out.exists():
+                prev_gbw = gbw_out
+            geom = _extract_relaxed_geom(out_file)
+            if geom:
+                prev_geom = geom
+            continue
+
+        moread = f'! MORead\n%moinp "{prev_gbw}"\n\n' if prev_gbw else ''
+
+        inp = f"""{moread}! CASSCF {basis} TightSCF Opt
+
+%geom
+  Constraints
+    {{B 0 2 {R:.3f} C}}
+  end
+end
+
+%casscf
+  nel {nel}
+  norb {norb}
+  mult {mult}
+  nroots 1
+  MaxIter {maxiter}
+end
+
+* xyz 0 3
+{prev_geom}
+*
+"""
+        print(f'R = {R:.2f} A ...', flush=True)
+        outfile = run_orca(tag, inp, work_dir, nprocs=nprocs)
+        E  = get_energy(outfile)
+        ok = terminated_normally(outfile)
+        print(f'  E = {E:.6f} Eh  ({"OK" if ok else "FAILED"})', flush=True)
+        results.append((R, E))
+
+        if gbw_out.exists():
+            prev_gbw = gbw_out
+        geom = _extract_relaxed_geom(outfile)
+        if geom:
+            prev_geom = geom
+
+    print(f'\nAll CASSCF points done. {len(results)} geometries.')
+    return results
+
+
+def run_nevpt2_scan(casscf_results, work_dir, nprocs=1,
+                    nel=6, norb=6, mult=3, basis='cc-pVDZ'):
+    """
+    Run NEVPT2 single points on CASSCF-relaxed geometries.
+
+    Uses the CASSCF .gbw file from each point as orbital guess via MORead.
+    Already-converged points are skipped on re-run.
+
+    Parameters
+    ----------
+    casscf_results : list of (float, float)
+        Output from run_casscf_scan: list of (R, E_casscf) pairs.
+    work_dir : Path
+        Working directory.
+    nprocs : int
+        Number of MPI processes.
+    nel, norb, mult : int
+        CASSCF active space parameters (must match the scan).
+    basis : str
+        Basis set keyword.
+
+    Returns
+    -------
+    list of (float, float)
+        List of (R, E_nevpt2_Eh) pairs.
+    """
+    from pathlib import Path
+    from utils import run_orca, get_nevpt2_energy, terminated_normally
+
+    work_dir = Path(work_dir)
+    results  = []
+
+    for R, _ in casscf_results:
+        cas_tag  = f'casscf_R{R:.2f}'.replace('.', 'p')
+        gbw_file = (work_dir / cas_tag).with_suffix('.gbw').resolve()
+        tag      = f'nevpt2_R{R:.2f}'.replace('.', 'p')
+        out_file = work_dir / f'{tag}.out'
+
+        if out_file.exists() and terminated_normally(out_file):
+            E = get_nevpt2_energy(out_file)
+            print(f'R = {R:.2f} A ... skipped (already done)  E = {E:.6f} Eh')
+            results.append((R, E))
+            continue
+
+        geom = _extract_relaxed_geom(work_dir / f'{cas_tag}.out')
+        if geom is None:
+            xyz = work_dir / f'{cas_tag}.xyz'
+            lines = xyz.read_text().splitlines()
+            geom  = '\n'.join(lines[2:])
+
+        inp = f"""! NEVPT2 {basis} TightSCF MORead
+
+%moinp "{gbw_file}"
+
+%casscf
+  nel {nel}
+  norb {norb}
+  mult {mult}
+  nroots 1
+end
+
+* xyz 0 3
+{geom}
+*
+"""
+        print(f'R = {R:.2f} A ...', flush=True)
+        outfile = run_orca(tag, inp, work_dir, nprocs=nprocs)
+        E = get_nevpt2_energy(outfile)
+        print(f'  E = {E:.6f} Eh', flush=True)
+        results.append((R, E))
+
+    print('All NEVPT2 done.')
+    return results
+
+
+def run_b3lyp_scan(casscf_results, work_dir, nprocs=1, basis='cc-pVDZ'):
+    """
+    Run B3LYP single points on CASSCF-relaxed geometries.
+
+    Runs outward (small R first) with warm-starting via MORead for
+    better convergence through the barrier region. Already-converged
+    points are skipped on re-run.
+
+    Parameters
+    ----------
+    casscf_results : list of (float, float)
+        Output from run_casscf_scan: list of (R, E_casscf) pairs.
+    work_dir : Path
+        Working directory.
+    nprocs : int
+        Number of MPI processes.
+    basis : str
+        Basis set keyword.
+
+    Returns
+    -------
+    list of (float, float)
+        List of (R, E_b3lyp_Eh) pairs, sorted large R first.
+    """
+    from pathlib import Path
+    from utils import run_orca, get_energy, terminated_normally
+
+    work_dir = Path(work_dir)
+    results  = []
+    prev_gbw = None
+
+    for R, _ in sorted(casscf_results, key=lambda x: x[0]):  # small R first
+        cas_tag  = f'casscf_R{R:.2f}'.replace('.', 'p')
+        tag      = f'b3lyp_R{R:.2f}'.replace('.', 'p')
+        gbw_out  = (work_dir / tag).with_suffix('.gbw').resolve()
+        out_file = work_dir / f'{tag}.out'
+
+        if out_file.exists() and terminated_normally(out_file):
+            E = get_energy(out_file)
+            print(f'R = {R:.2f} A ... skipped (already done)  E = {E:.6f} Eh')
+            results.append((R, E))
+            if gbw_out.exists():
+                prev_gbw = gbw_out
+            continue
+
+        geom = _extract_relaxed_geom(work_dir / f'{cas_tag}.out')
+        if geom is None:
+            xyz = work_dir / f'{cas_tag}.xyz'
+            lines = xyz.read_text().splitlines()
+            geom  = '\n'.join(lines[2:])
+
+        moread = f'! MORead\n%moinp "{prev_gbw}"\n\n' if prev_gbw else ''
+
+        inp = f"""{moread}! B3LYP {basis} TightSCF SlowConv
+
+%scf
+  MaxIter 500
+  STABPerform true
+end
+
+* xyz 0 3
+{geom}
+*
+"""
+        print(f'R = {R:.2f} A ...', flush=True)
+        outfile = run_orca(tag, inp, work_dir, nprocs=nprocs)
+        E = get_energy(outfile)
+        print(f'  E = {E:.6f} Eh', flush=True)
+        results.append((R, E))
+        if gbw_out.exists():
+            prev_gbw = gbw_out
+
+    results.sort(key=lambda x: -x[0])  # large R first
+    print(f'B3LYP done. Convergence failures: {sum(1 for _, e in results if e != e)}')
+    return results
