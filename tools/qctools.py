@@ -365,6 +365,8 @@ def run_casscf_scan(R_grid, start_geometry, work_dir, nprocs=1,
 
         inp = f"""{moread}! CASSCF {basis} TightSCF Opt
 
+%maxcore 4000
+
 %geom
   Constraints
     {{B 0 2 {R:.3f} C}}
@@ -452,6 +454,8 @@ def run_nevpt2_scan(casscf_results, work_dir, nprocs=1,
 
         inp = f"""! NEVPT2 {basis} TightSCF MORead
 
+%maxcore 4000
+
 %moinp "{gbw_file}"
 
 %casscf
@@ -529,6 +533,8 @@ def run_b3lyp_scan(casscf_results, work_dir, nprocs=1, basis='cc-pVDZ'):
         moread = f'! MORead\n%moinp "{prev_gbw}"\n\n' if prev_gbw else ''
 
         inp = f"""{moread}! B3LYP {basis} TightSCF SlowConv
+
+%maxcore 4000
 
 %scf
   MaxIter 500
