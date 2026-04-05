@@ -524,3 +524,54 @@ def run_b3lyp_scan(casscf_results, work_dir, inp_template,
     results.sort(key=lambda x: -x[0])  # large R first
     print(f'B3LYP done. Convergence failures: {sum(1 for _, e in results if e != e)}')
     return results
+
+
+############## Plotting functions for NB01 ##############
+
+def plot_h2_pec(r_values, energies, work_dir, hartree_to_ev):
+    """
+    Plot the H2 potential energy curves for RHF, B3LYP and CASSCF.
+
+    Parameters
+    ----------
+    r_values : array
+        H-H distances in Angstrom.
+    energies : dict
+        Dict of {method: energy_array} as returned by the scan loop.
+    work_dir : Path
+        Working directory — plot is saved as h2_pec.pdf here.
+    hartree_to_ev : float
+        Unit conversion factor.
+    """
+    import matplotlib.pyplot as plt
+    import matplotlib.ticker as ticker
+    import numpy as np
+    from pathlib import Path
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    colors  = {'RHF': '#e74c3c', 'B3LYP': '#8e44ad', 'CASSCF': '#27ae60'}
+    styles  = {'RHF': '-',       'B3LYP': '-.',       'CASSCF': '-'}
+    markers = {'RHF': 'o',       'B3LYP': '^',        'CASSCF': 'D'}
+
+    for method, E in energies.items():
+        E_ref = np.nanmin(energies['CASSCF'])
+        E_rel = (E - E_ref) * hartree_to_ev
+        mask  = ~np.isnan(E_rel)
+        ax.plot(r_values[mask], E_rel[mask],
+                color=colors[method], ls=styles[method],
+                marker=markers[method], ms=5, label=method, lw=2)
+
+    ax.axvline(0.74, color='grey', lw=1, ls=':', alpha=0.7,
+               label='r$_{eq}$ = 0.74 Å')
+    ax.axhline(0, color='grey', lw=0.5, ls=':')
+    ax.set_xlabel('H–H distance (Å)', fontsize=13)
+    ax.set_ylabel('Relative energy (eV)', fontsize=13)
+    ax.set_title('H₂ Potential Energy Curves — def2-SVP', fontsize=14)
+    ax.set_xlim(0.4, 5.2)
+    ax.set_ylim(-0.5, 8.0)
+    ax.legend(fontsize=12)
+    ax.xaxis.set_minor_locator(ticker.AutoMinorLocator())
+    ax.yaxis.set_minor_locator(ticker.AutoMinorLocator())
+    plt.tight_layout()
+    plt.savefig(Path(work_dir) / 'h2_pec.pdf')
+    plt.show()
