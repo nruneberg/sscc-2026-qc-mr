@@ -528,7 +528,7 @@ def run_b3lyp_scan(casscf_results, work_dir, inp_template,
 
 ############## Plotting functions for NB01 ##############
 
-def plot_h2_pec(r_values, energies, work_dir, hartree_to_ev):
+def plot_h2_pec(r_values, energies, work_dir):
     """
     Plot the H2 potential energy curves for RHF, B3LYP and CASSCF.
 
@@ -540,13 +540,13 @@ def plot_h2_pec(r_values, energies, work_dir, hartree_to_ev):
         Dict of {method: energy_array} as returned by the scan loop.
     work_dir : Path
         Working directory — plot is saved as h2_pec.pdf here.
-    hartree_to_ev : float
-        Unit conversion factor.
     """
     import matplotlib.pyplot as plt
     import matplotlib.ticker as ticker
     import numpy as np
     from pathlib import Path
+
+    HARTREE_TO_KJMOL = 2625.5
 
     fig, ax = plt.subplots(figsize=(8, 5))
     colors  = {'RHF': '#e74c3c', 'B3LYP': '#8e44ad', 'CASSCF': '#27ae60'}
@@ -555,7 +555,7 @@ def plot_h2_pec(r_values, energies, work_dir, hartree_to_ev):
 
     for method, E in energies.items():
         E_ref = np.nanmin(energies['CASSCF'])
-        E_rel = (E - E_ref) * hartree_to_ev
+        E_rel = (E - E_ref) * HARTREE_TO_KJMOL
         mask  = ~np.isnan(E_rel)
         ax.plot(r_values[mask], E_rel[mask],
                 color=colors[method], ls=styles[method],
@@ -565,10 +565,9 @@ def plot_h2_pec(r_values, energies, work_dir, hartree_to_ev):
                label='r$_{eq}$ = 0.74 Å')
     ax.axhline(0, color='grey', lw=0.5, ls=':')
     ax.set_xlabel('H–H distance (Å)', fontsize=13)
-    ax.set_ylabel('Relative energy (eV)', fontsize=13)
+    ax.set_ylabel('Relative energy (kJ/mol)', fontsize=13)
     ax.set_title('H₂ Potential Energy Curves — def2-SVP', fontsize=14)
     ax.set_xlim(0.4, 5.2)
-    ax.set_ylim(-0.5, 8.0)
     ax.legend(fontsize=12)
     ax.xaxis.set_minor_locator(ticker.AutoMinorLocator())
     ax.yaxis.set_minor_locator(ticker.AutoMinorLocator())
